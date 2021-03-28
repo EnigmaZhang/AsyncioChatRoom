@@ -31,8 +31,6 @@ def room_validation(document):
             {"type": "string", "regex": "[\x00-\xff0-9a-zA-z]+", "min": 1, "max": 32},
         "members":
             {"type": "list"},
-        "messages":
-            {"type": "list"},
         "message_num":
             {"type": "integer"}
     }

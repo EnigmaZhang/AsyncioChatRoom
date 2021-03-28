@@ -4,9 +4,11 @@
 
 * user: _id, name(<=32, >=1, number+letter+double byte), phoneNumber(unique)(number), password(>=8, <=32, number+letter), rooms(_id)
 
-* room: _id, name(<=32, >=1, number+letter+double byte), members(_id), messages(_id), message_num(number)
+* room: _id, name(<=32, >=1, number+letter+double byte), members(_id), message_num(number)
 
-* messages(in room): _id, userId, roomId, type, content, time
+* room_message:_id, room_id, messages(_ids)
+
+* messages: _id, userId, roomId, type, content, time
 
 ## API
 
