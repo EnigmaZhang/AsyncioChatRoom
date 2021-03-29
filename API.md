@@ -4,11 +4,11 @@
 
 * user: _id, name(<=32, >=1, number+letter+double byte), phoneNumber(unique)(number), password(>=8, <=32, number+letter), rooms(_id)
 
-* room: _id, name(<=32, >=1, number+letter+double byte), members(_id), message_num(number)
+* room: _id, name(<=32, >=1, number+letter+double byte), members(_id), message_num(number), room_message_id(_id), update_time
 
-* room_message:_id, room_id, messages(_ids)
+* room_message:_id, messages(_ids)
 
-* messages: _id, userId, roomId, type, content, time
+* messages: _id, userId, roomId, message_type, content, create_time
 
 ## API
 
@@ -32,10 +32,24 @@
 
     201: domain, 403: failed
 
+* post: /{roomId}/userId
+
+    201: None, 403: failed
+
 * get: /{id}
 
     200: domain, 404: not found
 
-* post: /{roomId} userId
+* get: /{roomId}/message/message_num/num
 
-    201: None, 403: failed
+    200: room_message domain, 404: not found
+
+### message
+
+* post: userId, roomId, message_type, content, roomMessageId([])
+
+    201: domain 403: failed
+
+* get: /{id}
+
+    200: domain 404: not found

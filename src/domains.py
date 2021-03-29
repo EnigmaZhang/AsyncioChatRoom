@@ -7,7 +7,7 @@ Description:
 
 from cerberus import Validator
 
-v = Validator()
+v = Validator(require_all=True)
 
 
 def user_validation(document):
@@ -15,7 +15,7 @@ def user_validation(document):
         "name":
             {"type": "string", "regex": "[\x00-\xff0-9a-zA-z]+", "min": 1, "max": 32},
         "phoneNumber":
-            {"regex": "[0-9]+", "min": 1, "max": 20},
+            {"type": "string", "regex": "[0-9]+", "min": 1, "max": 20},
         "password":
             {"type": "string", "regex": "[0-9a-zA-z]+", "min": 1, "max": 32},
         "rooms":
@@ -32,8 +32,26 @@ def room_validation(document):
         "members":
             {"type": "list"},
         "message_num":
-            {"type": "integer"}
+            {"type": "integer"},
+        "room_message_id":
+            {"type": "list"}
     }
+    if not v.validate(document, schema):
+        raise ValueError("User argument validation failed!\n" + str(document))
+
+
+def message_validation(document):
+    schema = {
+        "userId":
+            {"type": "string", "regex": "^[0-9a-fA-F]{24}$"},
+        "roomId":
+            {"type": "string", "regex": "^[0-9a-fA-F]{24}$"},
+        "message_type":
+            {"type": "string", "allowed": ["text", "image", "file"]},
+        "content":
+            {}
+    }
+
     if not v.validate(document, schema):
         raise ValueError("User argument validation failed!\n" + str(document))
 
