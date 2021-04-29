@@ -28,11 +28,11 @@
 
 ### room
 
-* post: name, members, messages, message_num
+* post: name, members, room_message_id, message_num
 
     201: domain, 403: failed
 
-* post: /{roomId}/userId
+* post: /{roomId}/user/userId
 
     201: None, 403: failed
 
@@ -40,9 +40,9 @@
 
     200: domain, 404: not found
 
-* get: /{roomId}/message/message_num/num
+* get: /{roomId}/message/latest/{update-time}/{message-num}
 
-    200: room_message domain, 404: not found
+    200: a list of message domain, 404: not found
 
 ### message
 
@@ -50,6 +50,6 @@
 
     201: domain 403: failed
 
-* get: /{id}
-
-    200: domain 404: not found
+* get: /room/{roomId}/latest/{update-time}/{message-num}
+  
+    200: a list of message, 404: not found

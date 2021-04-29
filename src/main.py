@@ -17,6 +17,9 @@ from tornado import httputil
 import domains
 import bcrypt
 import time
+import math
+
+from tornado.web import Application
 
 """
 Author: Enigma Zhang
@@ -173,8 +176,8 @@ class RoomHandler(BaseHandler, ABC):
         try:
             if roomId:
                 db = self.settings["db"]
-                user_repo = db.room
-                result = await user_repo.find_one({"_id": ObjectId(roomId)})
+                room_repo = db.room
+                result = await room_repo.find_one({"_id": ObjectId(roomId)})
                 if result is None:
                     raise ValueError("Room id not found")
                 objectIdToStr(result)
@@ -271,16 +274,16 @@ class MessageHandler(BaseHandler, ABC):
         """
         :param args:
         :param kwargs:
-        :return: message domain with create_time, 201; None, 403
+        :return: None, 201; None, 403
         Validation:
         function message_validation
         userId and roomId exist in db user and room
         """
         try:
-            my_lock = self.settings["my_lock"]
             message = json.loads(self.request.body)
             domains.message_validation(message)
             db = self.settings["db"]
+            client = self.settings["client"]
             message_repo = db.message
             user_repo = db.user
             room_repo = db.room
@@ -292,30 +295,34 @@ class MessageHandler(BaseHandler, ABC):
                 raise ValueError("User or room not exists")
             update_time = int(time.time())
             message["create_time"] = update_time
-            async with my_lock:
-                result = await message_repo.insert_one(message)
-                messageId = result.inserted_id
-                await room_repo.update_one({"_id": roomId},
-                                           {"$set": {"update_time": update_time}, "$inc": {"message_num": 1}})
-                room_message_id_list = (await room_repo.find_one({"_id": roomId}))["room_message_id"]
-                if len(room_message_id_list) > 0:
-                    # If message already sent in this room
-                    room_message_id = room_message_id_list[-1]
-                    room_message_item = await room_message_repo.find_one({"_id": room_message_id})
-                    if len(room_message_item["messages"]) >= self.settings["message_num_per_document"]:
-                        # If message exceeds the max message num of one room message document
-                        new_room_message_id = (await room_message_repo.insert_one(
-                            {"messages": [messageId]})).inserted_id
-                        await room_repo.update_one({"_id": roomId}, {"$push": {"room_message_id": new_room_message_id}})
+            async with await client.start_session() as s:
+                async with s.start_transaction():
+                    result = await message_repo.insert_one(message, session=s)
+                    messageId = result.inserted_id
+                    await room_repo.update_one({"_id": roomId},
+                                               {"$set": {"update_time": update_time}, "$inc": {"message_num": 1}},
+                                               session=s)
+                    room_message_id_list = (await room_repo.find_one({"_id": roomId}))["room_message_id"]
+                    if len(room_message_id_list) > 0:
+                        # If message already sent in this room
+                        room_message_id = room_message_id_list[-1]
+                        room_message_item = await room_message_repo.find_one({"_id": room_message_id}, session=s)
+                        if len(room_message_item["messages"]) >= self.settings["message_num_per_document"]:
+                            # If message exceeds the max message num of one room message document
+                            new_room_message_id = (await room_message_repo.insert_one(
+                                {"messages": [messageId]}, session=s)).inserted_id
+                            await room_repo.update_one({"_id": roomId},
+                                                       {"$push": {"room_message_id": new_room_message_id}}, session=s)
+                        else:
+                            await room_message_repo.update_one({"_id": room_message_id},
+                                                               {"$push": {"messages": messageId}}, session=s)
                     else:
-                        await room_message_repo.update_one({"_id": room_message_id}, {"$push": {"messages": messageId}})
-                else:
-                    new_room_message_id = (await room_message_repo.insert_one(
-                        {"room_id": roomId, "messages": [messageId]})).inserted_id
-                    await room_repo.update_one({"_id": roomId}, {"$push": {"room_message_id": new_room_message_id}})
+                        new_room_message_id = (await room_message_repo.insert_one(
+                            {"room_id": roomId, "messages": [messageId]}, session=s)).inserted_id
+                        await room_repo.update_one({"_id": roomId}, {"$push": {"room_message_id": new_room_message_id}},
+                                                   session=s)
             objectIdToStr(message)
             self.set_status(201)
-            self.write(json.dumps(message))
             return
         except asyncio.CancelledError:
             raise
@@ -325,8 +332,71 @@ class MessageHandler(BaseHandler, ABC):
         self.set_status(403)
 
 
+class RoomMessageHandler(BaseHandler, ABC):
+    """
+    Handle /api/room/{roomId}/latest/{update-time}/{message-num}
+    """
+    async def get(self, roomId=None, update_time=None, message_num=None, *args, **kwargs):
+        """
+        :param update_time:
+        :param roomId:
+        :param message_num:
+        :param args:
+        :param kwargs:
+        :return: list of domain message, 200; None, 404
+        """
+        max_num = self.settings["max_message_num_per_get"]
+        try:
+            if roomId and message_num and update_time is None:
+                raise ValueError("One of argument is None.")
+            db = self.settings["db"]
+            room_repo = db.room
+            message_repo = db.message
+            room_message_repo = db.room_message
+            room_item = await room_repo.find_one({"_id": ObjectId(roomId)})
+            message_num_per_document = self.settings["message_num_per_document"]
+            if room_item is None:
+                raise ValueError("Room id not exists.")
+            room_message_list = room_item["room_message_id"]
+            new_update_time = int(room_item["update_time"])
+            new_message_num = int(room_item["message_num"])
+            update_time = int(update_time)
+            message_num = int(message_num)
+            if new_update_time > update_time and new_message_num <= message_num:
+                message_num = max_num
+            elif new_update_time >= update_time and new_message_num >= message_num:
+                message_num = new_message_num - message_num
+                message_num = max(message_num, max_num)
+            else:
+                raise ValueError("Wrong update time or message num.")
+            if message_num == 0:
+                self.set_status(200)
+                self.write(json.dumps([]))
+                return
+            room_message_num = math.ceil(message_num / message_num_per_document)
+            room_message_fetch_list = room_message_list[-room_message_num:]
+            room_message_fetch_list = list(map(ObjectId, room_message_fetch_list))
+            message_id = []
+            async for room_message_item in room_message_repo.find({"_id": {"$in": room_message_fetch_list}}):
+                message_id.extend(room_message_item["messages"])
+            cursor = message_repo.find({"_id": {"$in": message_id}})
+            messages = await cursor.to_list(length=max_num)
+            for i in messages:
+                i["_id"] = str(i["_id"])
+            self.set_status(200)
+            self.write(json.dumps(messages))
+            return
+        except asyncio.CancelledError:
+            raise
+        except (bson.errors.InvalidId, ValueError):
+            tornado.log.app_log.warning("API using error: ", exc_info=True)
+
+        self.set_status(404)
+
+
 def main():
-    db = motor.motor_tornado.MotorClient().chatroom
+    client = motor.motor_tornado.MotorClient()
+    db = client.chatroom
     lock = asyncio.Lock()
     app = tornado.web.Application(
         [
@@ -334,13 +404,16 @@ def main():
             (r"/api/user/([0-9a-zA-z]+)", UserHandler),
             (r"/api/user/phoneNumber/([0-9]+)", UserPhoneNumberHandler),
             (r"/api/user", UserHandler),
-            (r"/api/room/([0-9a-zA-z]+)/([0-9a-zA-z]+)", RoomChangeHandler),
+            (r"/api/room/([0-9a-zA-z]+)/user/([0-9a-zA-z]+)", RoomChangeHandler),
             (r"/api/room/([0-9a-zA-z]+)", RoomHandler),
             (r"/api/room", RoomHandler),
             (r"/api/message", MessageHandler),
+            (r"/api/room/([0-9a-zA-z]+)/latest/([0-9]+)/([0-9]+)", RoomMessageHandler)
         ],
         db=db,
+        client=client,
         message_num_per_document=100,
+        max_message_num_per_get=500,
         my_lock=lock,
         debug=True
     )

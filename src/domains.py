@@ -13,7 +13,7 @@ v = Validator(require_all=True)
 def user_validation(document):
     schema = {
         "name":
-            {"type": "string", "regex": "[\x00-\xff0-9a-zA-z]+", "min": 1, "max": 32},
+            {"type": "string", "regex": "[\u00ff-\uffff0-9a-zA-z]+", "min": 1, "max": 32},
         "phoneNumber":
             {"type": "string", "regex": "[0-9]+", "min": 1, "max": 20},
         "password":
@@ -28,7 +28,7 @@ def user_validation(document):
 def room_validation(document):
     schema = {
         "name":
-            {"type": "string", "regex": "[\x00-\xff0-9a-zA-z]+", "min": 1, "max": 32},
+            {"type": "string", "regex": "[\u00ff-\uffff0-9a-zA-z]+", "min": 1, "max": 32},
         "members":
             {"type": "list"},
         "message_num":
