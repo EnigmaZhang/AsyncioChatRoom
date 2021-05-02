@@ -55,3 +55,14 @@ def message_validation(document):
     if not v.validate(document, schema):
         raise ValueError("User argument validation failed!\n" + str(document))
 
+
+def login_validation(document):
+    schema = {
+        "phoneNumber":
+            {"type": "string", "regex": "[0-9]+", "min": 1, "max": 20},
+        "password":
+            {"type": "string", "regex": "[0-9a-zA-z]+", "min": 1, "max": 32}
+    }
+
+    if not v.validate(document, schema):
+        raise ValueError("User argument validation failed!\n" + str(document))

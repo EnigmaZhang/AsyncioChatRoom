@@ -1,25 +1,24 @@
+import asyncio
+import datetime
 import json
+import math
 from abc import ABC
 from typing import Optional, Awaitable, Any
 
+import bson
 import motor
 import tornado.ioloop
-import tornado.web
 import tornado.log
-
+import tornado.web
 from bson.objectid import ObjectId
-import bson
-
-import asyncio
-
 from tornado import httputil
+from tornado.web import Application
 
 import domains
-import bcrypt
-import time
-import math
+from tools import objectIdToStr, Encryption, token_generate, token_validation, auth_with_token
 
-from tornado.web import Application
+import aredis
+import jwt
 
 """
 Author: Enigma Zhang
@@ -27,30 +26,6 @@ Author: Enigma Zhang
 Description:
     This module is the main file of app which defines settings, routers and API handlers.
 """
-
-
-def objectIdToStr(d):
-    """
-        Convert ObjectId in the dict to string type to dumped by json.
-    """
-    d["_id"] = str(d["_id"])
-
-
-class Encryption:
-    """
-        Encryption password and validates password.
-    """
-    @staticmethod
-    def encryption(password):
-        password = password.encode("utf-8")
-        salt = bcrypt.gensalt()
-        hash_result = bcrypt.hashpw(password, salt)
-        return hash_result
-
-    @staticmethod
-    def validation(plain, password):
-        plain = plain.encode("utf-8")
-        return bcrypt.checkpw(plain, password)
 
 
 class BaseHandler(tornado.web.RequestHandler, ABC):
@@ -69,7 +44,7 @@ class UserHandler(BaseHandler, ABC):
         :param userId: must not None
         :param args:
         :param kwargs:
-        :return: user domain with out password, 200; None 404
+        :return: user domain with out password, 200 if is this user, else domain without phoneNumber and rooms; None 404
         Validation:
         UserId is not None
         User exists in db user
@@ -83,6 +58,9 @@ class UserHandler(BaseHandler, ABC):
                     raise ValueError("User id not found")
                 objectIdToStr(result)
                 del result["password"]
+                if not await auth_with_token(self.settings["my_redis"], self.request.headers["Authorization"]):
+                    del result["phoneNumber"]
+                    del result["rooms"]
                 self.set_status(200)
                 self.write(json.dumps(result))
                 return
@@ -147,6 +125,9 @@ class UserPhoneNumberHandler(BaseHandler, ABC):
                     raise ValueError("User id not found")
                 objectIdToStr(result)
                 del result["password"]
+                if not await auth_with_token(self.settings["my_redis"], self.request.headers["Authorization"]):
+                    del result["phoneNumber"]
+                    del result["rooms"]
                 self.set_status(200)
                 self.write(json.dumps(result))
                 return
@@ -236,6 +217,15 @@ class RoomChangeHandler(BaseHandler, ABC):
         userId is not in members list of room item
         """
         try:
+            if not await auth_with_token(self.settings["my_redis"], self.request.headers["Authorization"]):
+                tornado.log.app_log.warning(self.request.headers["Authorization"])
+                uid = jwt.api_jwt.decode(self.request.headers["Authorization"], key="secret",
+                                                               algorithms="HS256",
+                                                               audience="ENIGMA", iss="ENIGMA")["uid"]
+                tornado.log.app_log.warning(uid)
+                tornado.log.app_log.warning((await self.settings["my_redis"].get(uid)).decode())
+                self.set_status(401)
+                return
             if not (roomId and userId):
                 raise ValueError("Missing Ids.")
 
@@ -280,6 +270,9 @@ class MessageHandler(BaseHandler, ABC):
         userId and roomId exist in db user and room
         """
         try:
+            if not await auth_with_token(self.settings["my_redis"], self.request.headers["Authorization"]):
+                self.set_status(401)
+                return
             message = json.loads(self.request.body)
             domains.message_validation(message)
             db = self.settings["db"]
@@ -293,7 +286,7 @@ class MessageHandler(BaseHandler, ABC):
             if await user_repo.count_documents({"_id": userId}) == 0 and \
                     await room_repo.count_documents({"_id": roomId}) == 0:
                 raise ValueError("User or room not exists")
-            update_time = int(time.time())
+            update_time = int(datetime.datetime.utcnow().timestamp())
             message["create_time"] = update_time
             async with await client.start_session() as s:
                 async with s.start_transaction():
@@ -347,6 +340,9 @@ class RoomMessageHandler(BaseHandler, ABC):
         """
         max_num = self.settings["max_message_num_per_get"]
         try:
+            if not await auth_with_token(self.settings["my_redis"], self.request.headers["Authorization"]):
+                self.set_status(401)
+                return
             if roomId and message_num and update_time is None:
                 raise ValueError("One of argument is None.")
             db = self.settings["db"]
@@ -394,10 +390,56 @@ class RoomMessageHandler(BaseHandler, ABC):
         self.set_status(404)
 
 
+class LoginHandler(BaseHandler, ABC):
+    """
+    Handle login and logout with session.
+    """
+
+    async def post(self, *args, **kwargs):
+        """
+        :param args:
+        :param kwargs:
+        :return: token and userId
+
+        Help to login and generate a token.
+        """
+        try:
+            login = json.loads(self.request.body)
+            domains.login_validation(login)
+            db = self.settings["db"]
+            my_redis = self.settings["my_redis"]
+            user_repo = db.user
+            phone_number = login["phoneNumber"]
+            password = login["password"]
+            user_item = await user_repo.find_one({"phoneNumber": phone_number})
+            if not user_item:
+                raise ValueError("User or room not exists")
+            uid = str(user_item["_id"])
+            true_password = user_item["password"]
+            if Encryption.validation(password, true_password):
+                token = token_generate(uid, 86400 * 5)
+                await my_redis.set(uid, token)
+                self.write(json.dumps(
+                    {
+                        "userId": uid,
+                        "token": token
+                    }
+                ))
+                self.set_status(201)
+                return
+        except asyncio.CancelledError:
+            raise
+        except ValueError:
+            tornado.log.app_log.warning("API using error: ", exc_info=True)
+
+        self.set_status(403)
+
+
 def main():
     client = motor.motor_tornado.MotorClient()
     db = client.chatroom
     lock = asyncio.Lock()
+    my_redis = aredis.StrictRedis(host="127.0.0.1", port=6379, db=0)
     app = tornado.web.Application(
         [
             (r"/", BaseHandler),
@@ -408,13 +450,15 @@ def main():
             (r"/api/room/([0-9a-zA-z]+)", RoomHandler),
             (r"/api/room", RoomHandler),
             (r"/api/message", MessageHandler),
-            (r"/api/room/([0-9a-zA-z]+)/latest/([0-9]+)/([0-9]+)", RoomMessageHandler)
+            (r"/api/room/([0-9a-zA-z]+)/latest/([0-9]+)/([0-9]+)", RoomMessageHandler),
+            (r"/api/session", LoginHandler)
         ],
         db=db,
         client=client,
         message_num_per_document=100,
         max_message_num_per_get=500,
         my_lock=lock,
+        my_redis=my_redis,
         debug=True
     )
     app.listen(9999)

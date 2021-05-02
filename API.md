@@ -53,3 +53,9 @@
 * get: /room/{roomId}/latest/{update-time}/{message-num}
   
     200: a list of message, 404: not found
+
+### session
+
+* post: phoneNumber, password
+  
+  201: userId, token, userId 401: unauthorized
