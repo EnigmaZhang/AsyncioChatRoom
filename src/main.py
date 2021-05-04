@@ -5,6 +5,7 @@ import math
 from abc import ABC
 from typing import Optional, Awaitable, Any
 
+import pymongo
 import bson
 import motor
 import tornado.ioloop
@@ -283,7 +284,7 @@ class MessageHandler(BaseHandler, ABC):
             userId = ObjectId(message["userId"])
             roomId = ObjectId(message["roomId"])
             room_message_repo = db.room_message
-            if await user_repo.count_documents({"_id": userId}) == 0 and \
+            if await user_repo.count_documents({"_id": userId}) == 0 or \
                     await room_repo.count_documents({"_id": roomId}) == 0:
                 raise ValueError("User or room not exists")
             update_time = int(datetime.datetime.utcnow().timestamp())
@@ -358,11 +359,11 @@ class RoomMessageHandler(BaseHandler, ABC):
             new_message_num = int(room_item["message_num"])
             update_time = int(update_time)
             message_num = int(message_num)
-            if new_update_time > update_time and new_message_num <= message_num:
+            if new_update_time > update_time and new_message_num < message_num:
                 message_num = max_num
             elif new_update_time >= update_time and new_message_num >= message_num:
                 message_num = new_message_num - message_num
-                message_num = max(message_num, max_num)
+                message_num = min(message_num, max_num)
             else:
                 raise ValueError("Wrong update time or message num.")
             if message_num == 0:
@@ -375,8 +376,8 @@ class RoomMessageHandler(BaseHandler, ABC):
             message_id = []
             async for room_message_item in room_message_repo.find({"_id": {"$in": room_message_fetch_list}}):
                 message_id.extend(room_message_item["messages"])
-            cursor = message_repo.find({"_id": {"$in": message_id}})
-            messages = await cursor.to_list(length=max_num)
+            cursor = message_repo.find({"_id": {"$in": message_id}}).sort("_id", pymongo.DESCENDING)
+            messages = await cursor.to_list(length=message_num)
             for i in messages:
                 i["_id"] = str(i["_id"])
             self.set_status(200)
@@ -462,6 +463,7 @@ def main():
         debug=True
     )
     app.listen(9999)
+    tornado.log.app_log.warning("Server running at port {}".format(9999))
     tornado.ioloop.IOLoop.current().start()
 
 
