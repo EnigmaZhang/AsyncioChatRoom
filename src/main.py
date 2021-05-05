@@ -34,7 +34,7 @@ class BaseHandler(tornado.web.RequestHandler, ABC):
 
     def prepare(self) -> Optional[Awaitable[None]]:
         self.set_header('Content-Type', 'application/json; charset=UTF-8')
-        if self.request.headers["Authorization"]:
+        if "Authorization" in self.request.headers.keys() and self.request.headers["Authorization"]:
             if self.request.headers["Authorization"].startswith("Bearer"):
                 self.request.headers["Authorization"] = self.request.headers["Authorization"].split()[1].strip()
         return super().prepare()
