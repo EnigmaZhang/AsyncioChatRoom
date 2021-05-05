@@ -4,6 +4,7 @@ import json
 import math
 from abc import ABC
 from typing import Optional, Awaitable, Any
+import os
 
 import aredis
 import bson
@@ -444,6 +445,10 @@ def main():
     client = motor.motor_tornado.MotorClient()
     db = client.chatroom
     lock = asyncio.Lock()
+    settings = {
+        "static_path": os.path.join(os.path.dirname(__file__), "static"),
+        "xsrf_cookies": True,
+    }
     my_redis = aredis.StrictRedis(host="127.0.0.1", port=6379, db=0)
     app = tornado.web.Application(
         [
@@ -456,7 +461,8 @@ def main():
             (r"/api/room", RoomHandler),
             (r"/api/message", MessageHandler),
             (r"/api/room/([0-9a-zA-z]+)/latest/([0-9]+)/([0-9]+)", RoomMessageHandler),
-            (r"/api/session", LoginHandler)
+            (r"/api/session", LoginHandler),
+            dict(path=settings["static_path"]),
         ],
         db=db,
         client=client,
@@ -464,7 +470,8 @@ def main():
         max_message_num_per_get=500,
         my_lock=lock,
         my_redis=my_redis,
-        debug=True
+        debug=True,
+        **settings
     )
     app.listen(9999)
     tornado.log.app_log.warning("Server running at port {}".format(9999))
