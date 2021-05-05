@@ -14,6 +14,7 @@ import pymongo
 import tornado.ioloop
 import tornado.log
 import tornado.web
+import tornado.autoreload
 from bson.objectid import ObjectId
 from tornado import httputil
 from tornado.web import Application
@@ -33,13 +34,26 @@ class BaseHandler(tornado.web.RequestHandler, ABC):
 
     def prepare(self) -> Optional[Awaitable[None]]:
         self.set_header('Content-Type', 'application/json; charset=UTF-8')
+        if self.request.headers["Authorization"]:
+            if self.request.headers["Authorization"].startswith("Bearer"):
+                self.request.headers["Authorization"] = self.request.headers["Authorization"].split()[1].strip()
         return super().prepare()
+
+    async def get(self, *args, **kwargs):
+        try:
+            self.write("Hello world! Welcome to the asyncio chatroom")
+        except asyncio.CancelledError:
+            self.set_status(404)
+            return
+        self.set_status(403)
+        return
 
 
 class UserHandler(BaseHandler, ABC):
     """
     Handle /api/user and /api/user/{id}.
     """
+
     async def get(self, userId=None, *args, **kwargs):
         """
         :param userId: must not None
@@ -109,6 +123,7 @@ class UserPhoneNumberHandler(BaseHandler, ABC):
     """
     Handle /api/user/phoneNumber/{phoneNumber}.
     """
+
     async def get(self, phoneNumber=None, *args, **kwargs):
         """
         :param phoneNumber:
@@ -226,8 +241,8 @@ class RoomChangeHandler(BaseHandler, ABC):
             if not await auth_with_token(self.settings["my_redis"], self.request.headers["Authorization"]):
                 tornado.log.app_log.warning(self.request.headers["Authorization"])
                 uid = jwt.api_jwt.decode(self.request.headers["Authorization"], key="secret",
-                                                               algorithms="HS256",
-                                                               audience="ENIGMA", iss="ENIGMA")["uid"]
+                                         algorithms="HS256",
+                                         audience="ENIGMA", iss="ENIGMA")["uid"]
                 tornado.log.app_log.warning(uid)
                 tornado.log.app_log.warning((await self.settings["my_redis"].get(uid)).decode())
                 self.set_status(401)
@@ -335,6 +350,7 @@ class RoomMessageHandler(BaseHandler, ABC):
     """
     Handle /api/room/{roomId}/latest/{update-time}/{message-num}
     """
+
     async def get(self, roomId=None, update_time=None, message_num=None, *args, **kwargs):
         """
         :param update_time:
@@ -447,7 +463,7 @@ def main():
     lock = asyncio.Lock()
     settings = {
         "static_path": os.path.join(os.path.dirname(__file__), "static"),
-        "xsrf_cookies": True,
+        "xsrf_cookies": False,
     }
     my_redis = aredis.StrictRedis(host="127.0.0.1", port=6379, db=0)
     app = tornado.web.Application(
@@ -462,7 +478,6 @@ def main():
             (r"/api/message", MessageHandler),
             (r"/api/room/([0-9a-zA-z]+)/latest/([0-9]+)/([0-9]+)", RoomMessageHandler),
             (r"/api/session", LoginHandler),
-            dict(path=settings["static_path"]),
         ],
         db=db,
         client=client,
@@ -471,6 +486,7 @@ def main():
         my_lock=lock,
         my_redis=my_redis,
         debug=True,
+        autoreload=True,
         **settings
     )
     app.listen(9999)
