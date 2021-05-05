@@ -5,9 +5,11 @@ import math
 from abc import ABC
 from typing import Optional, Awaitable, Any
 
-import pymongo
+import aredis
 import bson
+import jwt
 import motor
+import pymongo
 import tornado.ioloop
 import tornado.log
 import tornado.web
@@ -16,10 +18,7 @@ from tornado import httputil
 from tornado.web import Application
 
 import domains
-from tools import objectIdToStr, Encryption, token_generate, token_validation, auth_with_token
-
-import aredis
-import jwt
+from tools import objectIdToStr, Encryption, token_generate, auth_with_token
 
 """
 Author: Enigma Zhang
@@ -59,6 +58,7 @@ class UserHandler(BaseHandler, ABC):
                     raise ValueError("User id not found")
                 objectIdToStr(result)
                 del result["password"]
+                result["rooms"] = list(map(str, result["rooms"]))
                 if not await auth_with_token(self.settings["my_redis"], self.request.headers["Authorization"]):
                     del result["phoneNumber"]
                     del result["rooms"]
@@ -125,6 +125,7 @@ class UserPhoneNumberHandler(BaseHandler, ABC):
                 if result is None:
                     raise ValueError("User id not found")
                 objectIdToStr(result)
+                result["rooms"] = list(map(str, result["rooms"]))
                 del result["password"]
                 if not await auth_with_token(self.settings["my_redis"], self.request.headers["Authorization"]):
                     del result["phoneNumber"]
@@ -163,6 +164,9 @@ class RoomHandler(BaseHandler, ABC):
                 if result is None:
                     raise ValueError("Room id not found")
                 objectIdToStr(result)
+                result["members"] = list(map(str, result["members"]))
+                result["room_message_id"] = list(map(str, result["room_message_id"]))
+                tornado.log.app_log.warning(result)
                 self.set_status(200)
                 self.write(json.dumps(result))
                 return
