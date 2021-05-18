@@ -42,7 +42,6 @@ class BaseHandler(tornado.web.RequestHandler, ABC):
     async def get(self, *args, **kwargs):
         try:
             self.write("""
-            <!DOCTYPE html>
             <html>
             <head>
             <meta charset="utf-8">
