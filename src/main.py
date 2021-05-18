@@ -41,7 +41,18 @@ class BaseHandler(tornado.web.RequestHandler, ABC):
 
     async def get(self, *args, **kwargs):
         try:
-            self.write("Hello world! Welcome to the asyncio chatroom")
+            self.write("""
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <title>AsyncioChatroom</title>
+            </head>
+            <body>
+                Hello World! Welcome to the chatroom! The frontend is at port 9200.
+            </body>
+            </html>
+                            """)
         except asyncio.CancelledError:
             self.set_status(404)
             return
@@ -106,6 +117,7 @@ class UserHandler(BaseHandler, ABC):
                 raise ValueError("User already registered")
             user["password"] = Encryption.encryption(user["password"])
             await user_repo.insert_one(user)
+
             objectIdToStr(user)
             del user["password"]
             self.set_status(201)
@@ -313,28 +325,28 @@ class MessageHandler(BaseHandler, ABC):
                 async with s.start_transaction():
                     result = await message_repo.insert_one(message, session=s)
                     messageId = result.inserted_id
-                    await room_repo.update_one({"_id": roomId},
-                                               {"$set": {"update_time": update_time}, "$inc": {"message_num": 1}},
-                                               session=s)
-                    room_message_id_list = (await room_repo.find_one({"_id": roomId}))["room_message_id"]
+                    room_repo.update_one({"_id": roomId},
+                                         {"$set": {"update_time": update_time}, "$inc": {"message_num": 1}},
+                                         session=s)
+                    room_message_id_list = (room_repo.find_one({"_id": roomId}))["room_message_id"]
                     if len(room_message_id_list) > 0:
                         # If message already sent in this room
                         room_message_id = room_message_id_list[-1]
-                        room_message_item = await room_message_repo.find_one({"_id": room_message_id}, session=s)
+                        room_message_item = room_message_repo.find_one({"_id": room_message_id}, session=s)
                         if len(room_message_item["messages"]) >= self.settings["message_num_per_document"]:
                             # If message exceeds the max message num of one room message document
-                            new_room_message_id = (await room_message_repo.insert_one(
+                            new_room_message_id = (room_message_repo.insert_one(
                                 {"messages": [messageId]}, session=s)).inserted_id
-                            await room_repo.update_one({"_id": roomId},
-                                                       {"$push": {"room_message_id": new_room_message_id}}, session=s)
+                            room_repo.update_one({"_id": roomId},
+                                                 {"$push": {"room_message_id": new_room_message_id}}, session=s)
                         else:
-                            await room_message_repo.update_one({"_id": room_message_id},
-                                                               {"$push": {"messages": messageId}}, session=s)
+                            room_message_repo.update_one({"_id": room_message_id},
+                                                         {"$push": {"messages": messageId}}, session=s)
                     else:
-                        new_room_message_id = (await room_message_repo.insert_one(
+                        new_room_message_id = (room_message_repo.insert_one(
                             {"room_id": roomId, "messages": [messageId]}, session=s)).inserted_id
-                        await room_repo.update_one({"_id": roomId}, {"$push": {"room_message_id": new_room_message_id}},
-                                                   session=s)
+                        room_repo.update_one({"_id": roomId}, {"$push": {"room_message_id": new_room_message_id}},
+                                             session=s)
             objectIdToStr(message)
             self.set_status(201)
             return
