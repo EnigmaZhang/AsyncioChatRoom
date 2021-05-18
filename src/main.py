@@ -42,15 +42,7 @@ class BaseHandler(tornado.web.RequestHandler, ABC):
     async def get(self, *args, **kwargs):
         try:
             self.write("""
-            <html>
-            <head>
-            <meta charset="utf-8">
-            <title>AsyncioChatroom</title>
-            </head>
-            <body>
                 Hello World! Welcome to the chatroom! The frontend is at port 9200.
-            </body>
-            </html>
                             """)
         except asyncio.CancelledError:
             self.set_status(404)
